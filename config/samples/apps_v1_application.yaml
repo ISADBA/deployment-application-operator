@@ -4,3 +4,25 @@ metadata:
   name: application-sample
 spec:
   # TODO(user): Add fields here
+  deployment:
+    replicas: 2
+    selector:
+      matchLabels:
+        app: nginx
+    template:
+      metadata:
+        labels: nginx
+      spec:
+        containers:
+          - name: nginx
+            image: nginx:1.18
+            ports:
+            - containerPort: 80
+              name: http
+              protocol: TCP
+  service:
+    ports:
+    - name: http
+      port: 80
+      protocol: TCP
+    type: ClusterIP

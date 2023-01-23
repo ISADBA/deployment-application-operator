@@ -18,14 +18,22 @@ package controllers
 
 import (
 	"context"
+	"fmt"
+	"time"
 
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	appsv1 "github.com/ISADBA/deployment-application-operator/api/v1"
+	dappsv1 "github.com/ISADBA/deployment-application-operator/api/v1"
+	v1 "github.com/ISADBA/deployment-application-operator/api/v1"
 )
+
+const GenericRequeueDuration = 1 * time.Minute
+
+var CounterReconcileApplication int
 
 // ApplicationReconciler reconciles a Application object
 type ApplicationReconciler struct {
@@ -47,16 +55,61 @@ type ApplicationReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.10.0/pkg/reconcile
 func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+	// add timer and counter
+	<-time.NewTicker(1000 * time.Millisecond).C
+	log := log.FromContext(ctx)
 
-	// TODO(user): your logic here
+	CounterReconcileApplication += 1
+	log.Info("Starting a reconcile", "number", CounterReconcileApplication)
 
+	// get Application
+	app := &v1.Application{}
+	if err := r.Get(ctx, req.NamespacedName, app); err != nil {
+		if errors.IsNotFound(err) {
+			log.Info("Application not found.")
+			return ctrl.Result{}, nil
+		}
+		log.Error(err, "Failed to get the Application, will requeue after a short time.")
+		return ctrl.Result{RequeueAfter: GenericRequeueDuration}, err
+	}
+
+	// reconciler deployment
+	var result ctrl.Result
+	var err error
+
+	result, err = r.reconcileDeployment(ctx, app)
+	if err != nil {
+		log.Error(err, "Failed to reconcile Deployment.")
+		return result, err
+	}
+
+	result, err = r.reconcileService(ctx, app)
+	if err != nil {
+		log.Error(err, "Failed to reconcile Service.")
+		return result, err
+	}
+
+	log.Info("All resources have been reconciled.")
+
+	return ctrl.Result{}, nil
+
+}
+
+// reconcileDeployment logic
+func (r *ApplicationReconciler) reconcileDeployment(ctx context.Context, app *v1.Application) (result ctrl.Result, err error) {
+	fmt.Println("ReconcileDeployment ing......")
+	return ctrl.Result{}, nil
+}
+
+// reconcileService logic
+func (r *ApplicationReconciler) reconcileService(ctx context.Context, app *v1.Application) (result ctrl.Result, err error) {
+	fmt.Println("ReconcileService ing......")
 	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ApplicationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&appsv1.Application{}).
+		For(&dappsv1.Application{}).
 		Complete(r)
 }
