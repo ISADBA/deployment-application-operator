@@ -1,0 +1,16 @@
+domain: isadba.com
+layout:
+- go.kubebuilder.io/v3
+projectName: deployment-application-operator
+repo: github.com/ISADBA/deployment-application-operator
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: isadba.com
+  group: apps
+  kind: Application
+  path: github.com/ISADBA/deployment-application-operator/api/v1
+  version: v1
+version: "3"

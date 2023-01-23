@@ -1,0 +1,6 @@
+apiVersion: apps.isadba.com/v1
+kind: Application
+metadata:
+  name: application-sample
+spec:
+  # TODO(user): Add fields here
