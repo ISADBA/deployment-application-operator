@@ -19,16 +19,20 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	dappsv1 "github.com/ISADBA/deployment-application-operator/api/v1"
 	v1 "github.com/ISADBA/deployment-application-operator/api/v1"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 )
 
 const GenericRequeueDuration = 1 * time.Minute
@@ -98,12 +102,108 @@ func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 // reconcileDeployment logic
 func (r *ApplicationReconciler) reconcileDeployment(ctx context.Context, app *v1.Application) (result ctrl.Result, err error) {
 	fmt.Println("ReconcileDeployment ing......")
+	log := log.FromContext(ctx)
+
+	// get deployment
+	var dp = &appsv1.Deployment{}
+	err = r.Get(ctx, types.NamespacedName{
+		Namespace: app.Namespace,
+		Name:      app.Name,
+	}, dp)
+
+	// deployment status update
+	if err == nil {
+		log.Info("The Deployment has already exist.")
+		if reflect.DeepEqual(dp.Status, app.Status.Workflow) {
+			return ctrl.Result{}, nil
+		}
+		app.Status.Workflow = dp.Status
+		if err := r.Status().Update(ctx, app); err != nil {
+			log.Error(err, "Failed to update Application status")
+			return ctrl.Result{RequeueAfter: GenericRequeueDuration}, err
+		}
+		log.Info("The Application status has been updated.")
+		return ctrl.Result{}, nil
+	}
+	// Deployment Found, But have other error，next reconcile
+	if !errors.IsNotFound(err) {
+		log.Error(err, "Failed to get Deployment,will requeue after a short time.")
+		return ctrl.Result{RequeueAfter: GenericRequeueDuration}, err
+	}
+
+	// Deployment Not Found, Create Deployment
+	newDp := &appsv1.Deployment{}
+	newDp.SetName(app.Name)
+	newDp.SetNamespace(app.Namespace)
+	newDp.SetLabels(app.Labels)
+	newDp.Spec = app.Spec.Deployment.DeploymentSpec
+	newDp.Spec.Template.SetLabels(app.Labels)
+
+	if err := ctrl.SetControllerReference(app, newDp, r.Scheme); err != nil {
+		log.Error(err, "Failed to SetControllerReference,will requeue after a short time.")
+		return ctrl.Result{RequeueAfter: GenericRequeueDuration}, err
+	}
+
+	if err := r.Create(ctx, newDp); err != nil {
+		log.Error(err, "Failed to create Deployment,will requeue after a short time.")
+		return ctrl.Result{RequeueAfter: GenericRequeueDuration}, err
+	}
+
+	log.Info("The Deployment has been created.")
 	return ctrl.Result{}, nil
 }
 
 // reconcileService logic
 func (r *ApplicationReconciler) reconcileService(ctx context.Context, app *v1.Application) (result ctrl.Result, err error) {
 	fmt.Println("ReconcileService ing......")
+	log := log.FromContext(ctx)
+
+	var svc = &corev1.Service{}
+	err = r.Get(ctx, types.NamespacedName{
+		Namespace: app.Namespace,
+		Name:      app.Name,
+	}, svc)
+
+	if err == nil {
+		log.Info("The Service has already exist.")
+		if reflect.DeepEqual(svc.Status, app.Status.NetWork) {
+			return ctrl.Result{}, nil
+		}
+
+		app.Status.NetWork = svc.Status
+
+		if err := r.Status().Update(ctx, app); err != nil {
+			log.Error(err, "Failed to update Application status")
+			return ctrl.Result{RequeueAfter: GenericRequeueDuration}, err
+		}
+
+		log.Info("The Application status has been updated.")
+		return ctrl.Result{}, nil
+	}
+
+	if !errors.IsNotFound(err) {
+		log.Error(err, "Failed to get Service,will requeue after a short time.")
+		return ctrl.Result{RequeueAfter: GenericRequeueDuration}, err
+	}
+
+	newSvc := &corev1.Service{}
+	newSvc.SetName(app.Name)
+	newSvc.SetNamespace(app.Namespace)
+	newSvc.SetLabels(app.Labels)
+	newSvc.Spec = app.Spec.Service.ServiceSpec
+	newSvc.Spec.Selector = app.Labels
+
+	if err := ctrl.SetControllerReference(app, newSvc, r.Scheme); err != nil {
+		log.Error(err, "Failed to SetControllerReference,will requeue after a short time.")
+		return ctrl.Result{RequeueAfter: GenericRequeueDuration}, err
+	}
+
+	if err := r.Create(ctx, newSvc); err != nil {
+		log.Error(err, "Failed to create Service,will requeue after a short time.")
+		return ctrl.Result{RequeueAfter: GenericRequeueDuration}, err
+	}
+
+	log.Info("The Service has been created.")
 	return ctrl.Result{}, nil
 }
 

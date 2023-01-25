@@ -47,6 +47,8 @@ type ServiceTemplate struct {
 type ApplicationStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+	Workflow appsv1.DeploymentStatus `json:"workflow"`
+	NetWork  corev1.ServiceStatus    `json:"network"`
 }
 
 //+kubebuilder:object:root=true

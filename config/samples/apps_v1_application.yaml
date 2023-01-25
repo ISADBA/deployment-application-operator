@@ -2,6 +2,8 @@ apiVersion: apps.isadba.com/v1
 kind: Application
 metadata:
   name: application-sample
+  labels:
+    app: nginx
 spec:
   # TODO(user): Add fields here
   deployment:
@@ -11,18 +13,21 @@ spec:
         app: nginx
     template:
       metadata:
-        labels: nginx
+        labels: 
+          app: nginx
       spec:
         containers:
-          - name: nginx
-            image: nginx:1.18
-            ports:
-            - containerPort: 80
-              name: http
-              protocol: TCP
+        - name: nginx
+          image: nginx:1.18
+          ports:
+          - containerPort: 80
+            name: http
+            protocol: TCP
   service:
     ports:
     - name: http
       port: 80
       protocol: TCP
     type: ClusterIP
+    selector:
+      app: nginx
