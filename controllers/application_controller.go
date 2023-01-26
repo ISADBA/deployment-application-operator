@@ -26,8 +26,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	dappsv1 "github.com/ISADBA/deployment-application-operator/api/v1"
 	v1 "github.com/ISADBA/deployment-application-operator/api/v1"
@@ -119,15 +122,28 @@ func (r *ApplicationReconciler) reconcileDeployment(ctx context.Context, app *v1
 	// deployment status update
 	if err == nil {
 		log.Info("The Deployment has already exist.")
-		if reflect.DeepEqual(dp.Status, app.Status.Workflow) {
+
+		if reflect.DeepEqual(dp.Spec, app.Spec.Deployment.DeploymentSpec) {
+			if reflect.DeepEqual(dp.Status, app.Status.Workflow) {
+				return ctrl.Result{}, nil
+			}
+			app.Status.Workflow = dp.Status
+			if err := r.Status().Update(ctx, app); err != nil {
+				log.Error(err, "Failed to update Application status")
+				return ctrl.Result{RequeueAfter: GenericRequeueDuration}, err
+			}
+			log.Info("The Application status has been updated.")
 			return ctrl.Result{}, nil
 		}
-		app.Status.Workflow = dp.Status
-		if err := r.Status().Update(ctx, app); err != nil {
-			log.Error(err, "Failed to update Application status")
+
+		// update Deployment Spec
+		dp.Spec = app.Spec.Deployment.DeploymentSpec
+		dp.Spec.Template.SetLabels(app.Labels)
+		if err = r.Update(ctx, dp); err != nil {
+			log.Error(err, "Failed to update Deployment,will requeue after a short time.")
 			return ctrl.Result{RequeueAfter: GenericRequeueDuration}, err
 		}
-		log.Info("The Application status has been updated.")
+		log.Info("Application.deployment with Deployment difference,Deployment will updated....")
 		return ctrl.Result{}, nil
 	}
 	// Deployment Found, But have other error，next reconcile
@@ -144,6 +160,7 @@ func (r *ApplicationReconciler) reconcileDeployment(ctx context.Context, app *v1
 	newDp.Spec = app.Spec.Deployment.DeploymentSpec
 	newDp.Spec.Template.SetLabels(app.Labels)
 
+	// 设置deployment为application的子资源，当app删除后，deployment自动回收
 	if err := ctrl.SetControllerReference(app, newDp, r.Scheme); err != nil {
 		log.Error(err, "Failed to SetControllerReference,will requeue after a short time.")
 		return ctrl.Result{RequeueAfter: GenericRequeueDuration}, err
@@ -198,6 +215,7 @@ func (r *ApplicationReconciler) reconcileService(ctx context.Context, app *v1.Ap
 	newSvc.Spec = app.Spec.Service.ServiceSpec
 	newSvc.Spec.Selector = app.Labels
 
+	// 设置service为application的子资源，当app删除后，service自动回收
 	if err := ctrl.SetControllerReference(app, newSvc, r.Scheme); err != nil {
 		log.Error(err, "Failed to SetControllerReference,will requeue after a short time.")
 		return ctrl.Result{RequeueAfter: GenericRequeueDuration}, err
@@ -214,7 +232,67 @@ func (r *ApplicationReconciler) reconcileService(ctx context.Context, app *v1.Ap
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ApplicationReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	setupLog := ctrl.Log.WithName("setup")
+
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&dappsv1.Application{}).
+		For(&dappsv1.Application{}, builder.WithPredicates(predicate.Funcs{
+			CreateFunc: func(event event.CreateEvent) bool {
+				return true
+			},
+			DeleteFunc: func(event event.DeleteEvent) bool {
+				setupLog.Info("The Application has been deleted.", "name", event.Object.GetName())
+				return false
+			},
+			UpdateFunc: func(event event.UpdateEvent) bool {
+				if event.ObjectNew.GetResourceVersion() == event.ObjectOld.GetResourceVersion() {
+					return false
+				}
+				if reflect.DeepEqual(event.ObjectNew.(*v1.Application).Spec, event.ObjectOld.(*v1.Application).Spec) {
+					return false
+				}
+				return true
+			},
+		})).Owns(&appsv1.Deployment{}, builder.WithPredicates(predicate.Funcs{
+		CreateFunc: func(event event.CreateEvent) bool {
+			return false
+		},
+		DeleteFunc: func(event event.DeleteEvent) bool {
+			setupLog.Info("The deployment has been deleted.", "name", event.Object.GetName())
+			return true
+		},
+		UpdateFunc: func(event event.UpdateEvent) bool {
+			if event.ObjectNew.GetResourceVersion() == event.ObjectOld.GetResourceVersion() {
+				setupLog.Info("The Deployment has been update,But ResourceVersion is same.", "ResourceVersion", event.ObjectOld.GetResourceVersion())
+				return false
+			}
+			if reflect.DeepEqual(event.ObjectNew.(*appsv1.Deployment).Spec, event.ObjectOld.(*appsv1.Deployment).Spec) {
+				setupLog.Info("The Deployment has been update,But Spec is same.")
+				return false
+			}
+			setupLog.Info("The Deployment has been updated, will reconcile.......")
+			return true
+		},
+		GenericFunc: nil,
+	})).Owns(&corev1.Service{}, builder.WithPredicates(predicate.Funcs{
+		CreateFunc: func(ce event.CreateEvent) bool {
+			return false
+		},
+		DeleteFunc: func(de event.DeleteEvent) bool {
+			setupLog.Info("The Service has been deleted.", "name", de.Object.GetName())
+			return true
+		},
+		UpdateFunc: func(ue event.UpdateEvent) bool {
+			if ue.ObjectNew.GetResourceVersion() == ue.ObjectOld.GetResourceVersion() {
+				setupLog.Info("The Service has been update,But ResourceVersion is same.", "ResourceVersion", ue.ObjectOld.GetResourceVersion())
+				return false
+			}
+			if reflect.DeepEqual(ue.ObjectNew.(*corev1.Service).Spec, ue.ObjectOld.(*corev1.Service).Spec) {
+				setupLog.Info("The Service has been update,But Spec is same.")
+				return false
+			}
+			setupLog.Info("The Service has been updated, will reconcile.......")
+			return true
+		},
+	})).
 		Complete(r)
 }
